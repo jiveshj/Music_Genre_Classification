@@ -20,7 +20,7 @@ from pathlib import Path
 import librosa
 import torch
 from tqdm import tqdm
-from transformers import Wav2Vec2Processor, Wav2Vec2Model, HubertModel, AutoProcessor, AutoModel
+from transformers import Wav2Vec2Model, HubertModel, AutoProcessor, AutoModel, Wav2Vec2FeatureExtractor
 
 warnings.filterwarnings("ignore")
 
@@ -28,15 +28,14 @@ GENRES = [
     "blues", "classical", "country", "disco", "hiphop",
     "jazz", "metal", "pop", "reggae", "rock",
 ]
-TARGET_SR = 16_000  # Wav2Vec 2.0 expects 16 kHz
 
 
 def load_model(device: str):
-    wav2vec_processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-base")
+    wav2vec_processor = Wav2Vec2FeatureExtractor.from_pretrained("facebook/wav2vec2-base")
     wav2vec_model = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base").to(device)
     wav2vec_model.eval()
 
-    hubert_processor = Wav2Vec2Processor.from_pretrained("facebook/hubert-base-ls960")
+    hubert_processor = Wav2Vec2FeatureExtractor.from_pretrained("facebook/hubert-base-ls960")
     hubert_model = HubertModel.from_pretrained("facebook/hubert-base-ls960").to(device)
     hubert_model.eval()
 
@@ -50,7 +49,7 @@ def load_model(device: str):
     }
 
 
-def extract_embedding(y, sr, processor, model, device: str) -> list:
+def extract_embedding(y, sr, processor, model, device: str, TARGET_SR: int = 16000) -> list:
     if sr != TARGET_SR:
         y = librosa.resample(y, orig_sr=sr, target_sr=TARGET_SR)
 
@@ -112,9 +111,9 @@ def main():
             y, sr = librosa.load(path, sr=None, mono=True)
             results[audio_id] = {
                 "label":   audio_id.split("/")[0],
-                "wav2vec": extract_embedding(y, sr, *models["wav2vec"], device),
-                "hubert":  extract_embedding(y, sr, *models["hubert"], device),
-                "mert":    extract_embedding(y, sr, *models["mert"], device),
+                "wav2vec": extract_embedding(y, sr, *models["wav2vec"], device, TARGET_SR=16000),
+                "hubert":  extract_embedding(y, sr, *models["hubert"], device, TARGET_SR=16000),
+                "mert":    extract_embedding(y, sr, *models["mert"], device, TARGET_SR=24000),
             }
         except Exception as e:
             errors.append(audio_id)
