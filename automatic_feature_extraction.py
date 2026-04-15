@@ -20,7 +20,7 @@ from pathlib import Path
 import librosa
 import torch
 from tqdm import tqdm
-from transformers import Wav2Vec2Processor, Wav2Vec2Model
+from transformers import Wav2Vec2Processor, Wav2Vec2Model, HubertModel, AutoProcessor, AutoModel
 
 warnings.filterwarnings("ignore")
 
@@ -32,13 +32,25 @@ TARGET_SR = 16_000  # Wav2Vec 2.0 expects 16 kHz
 
 
 def load_model(device: str):
-    processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-base")
-    model = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base").to(device)
-    model.eval()
-    return processor, model
+    wav2vec_processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-base")
+    wav2vec_model = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base").to(device)
+    wav2vec_model.eval()
+
+    hubert_processor = Wav2Vec2Processor.from_pretrained("facebook/hubert-base-ls960")
+    hubert_model = HubertModel.from_pretrained("facebook/hubert-base-ls960").to(device)
+    hubert_model.eval()
+
+    mert_processor = AutoProcessor.from_pretrained("m-a-p/MERT-v1-95M", trust_remote_code=True)
+    mert_model = AutoModel.from_pretrained("m-a-p/MERT-v1-95M", trust_remote_code=True).to(device)
+    mert_model.eval()
+    return {
+        "wav2vec": (wav2vec_processor, wav2vec_model),
+        "hubert":  (hubert_processor,  hubert_model),
+        "mert":    (mert_processor,    mert_model),
+    }
 
 
-def extract_wav2vec(y, sr, processor, model, device: str) -> list:
+def extract_embedding(y, sr, processor, model, device: str) -> list:
     if sr != TARGET_SR:
         y = librosa.resample(y, orig_sr=sr, target_sr=TARGET_SR)
 
@@ -81,7 +93,7 @@ def main():
         device = args.device
     print(f"[INFO] Using device: {device}")
 
-    processor, model = load_model(device)
+    models = load_model(device)
 
     results = {}
     if args.resume and os.path.exists(args.out):
@@ -100,7 +112,9 @@ def main():
             y, sr = librosa.load(path, sr=None, mono=True)
             results[audio_id] = {
                 "label":   audio_id.split("/")[0],
-                "wav2vec": extract_wav2vec(y, sr, processor, model, device),
+                "wav2vec": extract_embedding(y, sr, *models["wav2vec"], device),
+                "hubert":  extract_embedding(y, sr, *models["hubert"], device),
+                "mert":    extract_embedding(y, sr, *models["mert"], device),
             }
         except Exception as e:
             errors.append(audio_id)
