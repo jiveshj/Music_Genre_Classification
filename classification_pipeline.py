@@ -30,27 +30,21 @@ from sklearn.metrics import confusion_matrix
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.pipeline import Pipeline
-from sklearn.kernel_approximation import RBFSampler
-from sklearn.kernel_approximation import PolynomialCountSketch
+from sklearn.kernel_approximation import RBFSampler, PolynomialCountSketch
 
 
 
 def kernel_linear(X: np.ndarray) -> np.ndarray:
-    return X
+    return X 
 
-
-def kernel_rbf(X: np.ndarray, gamma: float = None) -> np.ndarray:
-    if gamma is None:
-        gamma = 1.0 / X.shape[1]
+def kernel_rbf(gamma: float) -> np.ndarray:
     rbf = RBFSampler(gamma=gamma, n_components=512, random_state=42)
-    return rbf.fit_transform(X)
+    return rbf
 
 
-def kernel_poly(X: np.ndarray, degree: int = 2) -> np.ndarray:
+def kernel_poly(degree: int = 2) -> np.ndarray:
     poly = PolynomialCountSketch(degree=degree, n_components=512, random_state=42)
-    return poly.fit_transform(X)
-
+    return poly
 
 KERNELS = {
     "linear": kernel_linear,
@@ -93,10 +87,10 @@ def load_features(path: str, feature_key: str) -> tuple[np.ndarray, np.ndarray]:
 
     X = np.array(X, dtype=np.float32)
     y = le.transform(y)
-    return X, y, le
+    return X, y
 
 
-def evaluate(X: np.ndarray, y: np.ndarray, classifier, n_splits: int = 5) -> dict:
+def evaluate(X: np.ndarray, y: np.ndarray, classifier, kernel_fn, n_splits: int = 5) -> dict:
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
     all_gt, all_pred = [], []
 
@@ -107,6 +101,15 @@ def evaluate(X: np.ndarray, y: np.ndarray, classifier, n_splits: int = 5) -> dic
         scaler = StandardScaler()
         X_train = scaler.fit_transform(X_train)
         X_test  = scaler.transform(X_test)
+
+        if kernel_fn is not kernel_linear:
+            if kernel_fn == kernel_rbf:
+                gamma = 1.0 / X_train.shape[1]
+                transformer = kernel_fn(gamma=gamma)
+            else:
+                transformer = kernel_fn()
+            X_train = transformer.fit_transform(X_train)
+            X_test  = transformer.transform(X_test)
 
         classifier.fit(X_train, y_train)
         preds = classifier.predict(X_test)
@@ -151,23 +154,21 @@ def main():
 
         for feat_key in manualfeature_keys:
             print(f"  Feature: {feat_key}")
-            X, y, le = load_features(args.manual_features, feat_key)
+            X, y = load_features(args.manual_features, feat_key)
             results[clf_name][feat_key] = {}
 
             for kernel_name, kernel_fn in tqdm(KERNELS.items(), desc=f"    Kernels", leave=False):
-                X_aug = kernel_fn(X)
-                metrics = evaluate(X_aug, y, clf, n_splits=args.cv)
+                metrics = evaluate(X, y, clf, kernel_fn, n_splits=args.cv)
                 results[clf_name][feat_key][kernel_name] = metrics
                 print(f"    [{kernel_name}] TPR={metrics['TPR']:.3f}  FPR={metrics['FPR']:.3f}")
         
         for feat_key in autofeature_keys:
             print(f"  Feature: {feat_key}")
-            X, y, le = load_features(args.auto_features, feat_key)
+            X, y = load_features(args.auto_features, feat_key)
             results[clf_name][feat_key] = {}
 
             for kernel_name, kernel_fn in tqdm(KERNELS.items(), desc=f"    Kernels", leave=False):
-                X_aug = kernel_fn(X)
-                metrics = evaluate(X_aug, y, clf, n_splits=args.cv)
+                metrics = evaluate(X, y, clf, kernel_fn, n_splits=args.cv)
                 results[clf_name][feat_key][kernel_name] = metrics
                 print(f"    [{kernel_name}] TPR={metrics['TPR']:.3f}  FPR={metrics['FPR']:.3f}")
 
