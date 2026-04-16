@@ -123,13 +123,13 @@ def evaluate(X: np.ndarray, y: np.ndarray, classifier, kernel_fn, genre_names: l
         tpr, fpr = compute_tpr_fpr(y_test, preds)
         cm = confusion_matrix(y_test, preds, labels = list(np.arange(N_CLASSES)))
 
-        # saving visualization for KNN with MFCC and linear kernel just for now
-        if clf_name == "KNN" and feat_key == "MFCC" and kernel_name == "linear":
-       
+        # saving visualization for a particular combination just for now
+        if clf_name == "LogisticRegression" and feat_key == "MFCC" and kernel_name == "linear":
+            accuracy = np.trace(cm) / np.sum(cm)
             plt.figure(figsize=(8, 6))
             sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
                         xticklabels=genre_names, yticklabels=genre_names)
-            plt.title(f"{clf_name} — {feat_key} — {kernel_name} — Fold {fold_idx}")
+            plt.title(f"{clf_name} — {feat_key} — {kernel_name} — Fold {fold_idx}\nAccuracy: {accuracy:.3f}")            
             plt.xlabel("Predicted")
             plt.ylabel("True")
             plt.tight_layout()
@@ -184,7 +184,10 @@ def main():
         "DecisionTree": DecisionTreeClassifier(max_depth=20, random_state=42),
         "LogisticRegression": LogisticRegression(max_iter=1000, random_state=42, n_jobs=-1),
     }
-
+    #You can use this to just get the confusion matrix + accuracy for a particular combination    
+    # X, y, le = load_features(args.manual_features, "MFCC")
+    # genre_names = le.classes_.tolist()
+    # metrics = evaluate(X, y,LogisticRegression(max_iter=1000, random_state=42, n_jobs=-1) ,kernel_linear , genre_names, n_splits = args.cv, clf_name= "LogisticRegression", feat_key="MFCC", kernel_name= "linear")
 
     for clf_name, clf in classifiers.items():
         print(f"\n── {clf_name} ──")
