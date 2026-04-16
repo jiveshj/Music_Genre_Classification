@@ -3,20 +3,20 @@ Output format
 -------------
 {
   "KNN": {
-    "wav2vec": {
-      "linear":   {"TPR": 0.85, "FPR": 0.02, "ground_truth": [...], "predictions": [...]},
-      "rbf":      {...},
-      "poly":     {...}
+    "spectrogram": {
+      "linear": {
+        "aggregated": {"TPR": 0.85, "FPR": 0.02, "confusion_matrix": [[...]], "ground_truth": [...], "predictions": [...]},
+        "folds": [
+          {"fold": 0, "TPR": ..., "FPR": ..., "confusion_matrix": [[...]], "ground_truth": [...], "predictions": [...]},
+          ...
+        ]
+      },
+      "rbf": {...},
+      "poly": {...}
     },
-    "hubert":  {...},
-    "mert":    {...}
-    "MFCC": {...},
-    "spectrogram": {...},
-    "mel_spectrogram": {...},
-    "log_mel_spectrogram": {...}
+    ...
   },
-  "DecisionTree": { ... },
-  "LogisticRegression": { ... }
+  ...
 }
 """
 
@@ -31,9 +31,11 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.kernel_approximation import RBFSampler, PolynomialCountSketch
+import seaborn as sns
+import matplotlib.pyplot as plt
 
 
-
+N_CLASSES = 10
 def kernel_linear(X: np.ndarray) -> np.ndarray:
     return X 
 
@@ -53,19 +55,23 @@ KERNELS = {
 }
 
 
-def compute_tpr_fpr(y_true: np.ndarray, y_pred: np.ndarray, n_classes: int) -> tuple[float, float]:
-    tprs, fprs = [], []
-    for c in range(n_classes):
+def compute_tpr_fpr(y_true: np.ndarray, y_pred: np.ndarray) -> tuple[float, float]:
+    total_tp, total_fn, total_fp, total_tn = 0, 0, 0, 0
+    for c in range(N_CLASSES):
         y_true_bin = (y_true == c).astype(int)
         y_pred_bin = (y_pred == c).astype(int)
         cm = confusion_matrix(y_true_bin, y_pred_bin, labels=[0, 1])
         tn, fp, fn, tp = cm.ravel()
-        tprs.append(tp / (tp + fn) if (tp + fn) > 0 else 0.0)
-        fprs.append(fp / (fp + tn) if (fp + tn) > 0 else 0.0)
-    return float(np.mean(tprs)), float(np.mean(fprs))
+        total_tp += tp
+        total_fn += fn
+        total_fp += fp
+        total_tn += tn
 
+    tpr = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0.0
+    fpr = total_fp / (total_fp + total_tn) if (total_fp + total_tn) > 0 else 0.0
+    return float(tpr), float(fpr)
 
-def load_features(path: str, feature_key: str) -> tuple[np.ndarray, np.ndarray]:
+def load_features(path: str, feature_key: str):
     with open(path) as f:
         data = json.load(f)
 
@@ -87,14 +93,14 @@ def load_features(path: str, feature_key: str) -> tuple[np.ndarray, np.ndarray]:
 
     X = np.array(X, dtype=np.float32)
     y = le.transform(y)
-    return X, y
+    return X, y, le
 
 
-def evaluate(X: np.ndarray, y: np.ndarray, classifier, kernel_fn, n_splits: int = 5) -> dict:
+def evaluate(X: np.ndarray, y: np.ndarray, classifier, kernel_fn, genre_names: list, n_splits: int = 5, clf_name: str = "", feat_key: str = "", kernel_name: str = "") -> list:
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
-    all_gt, all_pred = [], []
+    fold_results = []
 
-    for train_idx, test_idx in skf.split(X, y):
+    for fold_idx, (train_idx, test_idx) in enumerate(skf.split(X, y)):
         X_train, X_test = X[train_idx], X[test_idx]
         y_train, y_test = y[train_idx], y[test_idx]
 
@@ -114,19 +120,51 @@ def evaluate(X: np.ndarray, y: np.ndarray, classifier, kernel_fn, n_splits: int 
         classifier.fit(X_train, y_train)
         preds = classifier.predict(X_test)
 
-        all_gt.extend(y_test.tolist())
-        all_pred.extend(preds.tolist())
+        tpr, fpr = compute_tpr_fpr(y_test, preds)
+        cm = confusion_matrix(y_test, preds, labels = list(np.arange(N_CLASSES)))
 
-    all_gt   = np.array(all_gt)
-    all_pred = np.array(all_pred)
-    n_classes = len(np.unique(all_gt))
-    tpr, fpr = compute_tpr_fpr(all_gt, all_pred, n_classes)
+        # saving visualization for KNN with MFCC and linear kernel just for now
+        if clf_name == "KNN" and feat_key == "MFCC" and kernel_name == "linear":
+       
+            plt.figure(figsize=(8, 6))
+            sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
+                        xticklabels=genre_names, yticklabels=genre_names)
+            plt.title(f"{clf_name} — {feat_key} — {kernel_name} — Fold {fold_idx}")
+            plt.xlabel("Predicted")
+            plt.ylabel("True")
+            plt.tight_layout()
+            plt.savefig(f"{clf_name}_{feat_key}_{kernel_name}_fold{fold_idx}.png", dpi=100)
+            plt.close()
 
+
+        fold_results.append({
+            "fold": fold_idx,
+            "TPR": tpr,
+            "FPR": fpr,
+            "confusion_matrix": cm.tolist(),
+            "ground_truth": y_test.tolist(),
+            "predictions": preds.tolist(),
+        })
+    
+    all_gt   = []   # Just combining all the folds' results
+    all_pred = []
+    cms, tprs, fprs = [], [], []
+    for fold in fold_results:
+        all_gt.extend(fold["ground_truth"])
+        all_pred.extend(fold["predictions"])
+        cms.append(np.array(fold["confusion_matrix"]))
+        tprs.append(fold["TPR"])
+        fprs.append(fold["FPR"])
+ 
     return {
-        "TPR":          tpr,
-        "FPR":          fpr,
-        "ground_truth": all_gt.tolist(),
-        "predictions":  all_pred.tolist(),
+        "aggregated": {
+            "TPR": float(np.mean(tprs)),
+            "FPR": float(np.mean(fprs)),
+            "confusion_matrix": np.sum(cms, axis=0).tolist(),
+            "ground_truth": all_gt,
+            "predictions": all_pred,
+        },
+        "folds": fold_results,
     }
 
 
@@ -135,7 +173,7 @@ def main():
     parser.add_argument("--manual_features", required=True, help="Path to manual_features.json")
     parser.add_argument("--auto_features", required=True, help="Path to auto_features.json")
     parser.add_argument("--out",      default="ClassifierResults.json")
-    parser.add_argument("--cv",       type=int, default=5, help="Number of CV folds")
+    parser.add_argument("--cv",       type=int, default=2, help="Number of CV folds")
     args = parser.parse_args()
 
     autofeature_keys = ["wav2vec", "hubert", "mert"]
@@ -154,24 +192,29 @@ def main():
 
         for feat_key in manualfeature_keys:
             print(f"  Feature: {feat_key}")
-            X, y = load_features(args.manual_features, feat_key)
+            X, y, le = load_features(args.manual_features, feat_key)
+            genre_names = le.classes_.tolist()
             results[clf_name][feat_key] = {}
-
             for kernel_name, kernel_fn in tqdm(KERNELS.items(), desc=f"    Kernels", leave=False):
-                metrics = evaluate(X, y, clf, kernel_fn, n_splits=args.cv)
+                metrics = evaluate(X, y, clf, kernel_fn, genre_names, n_splits=args.cv, clf_name=clf_name, feat_key=feat_key, kernel_name=kernel_name)
+        
                 results[clf_name][feat_key][kernel_name] = metrics
-                print(f"    [{kernel_name}] TPR={metrics['TPR']:.3f}  FPR={metrics['FPR']:.3f}")
+                agg = metrics["aggregated"]
+                print(f"[{kernel_name}] TPR={agg['TPR']:.3f}  FPR={agg['FPR']:.3f}")
         
         for feat_key in autofeature_keys:
             print(f"  Feature: {feat_key}")
-            X, y = load_features(args.auto_features, feat_key)
+            X, y, le = load_features(args.auto_features, feat_key)
             results[clf_name][feat_key] = {}
+            genre_names = le.classes_.tolist()
 
             for kernel_name, kernel_fn in tqdm(KERNELS.items(), desc=f"    Kernels", leave=False):
-                metrics = evaluate(X, y, clf, kernel_fn, n_splits=args.cv)
+                metrics = evaluate(X, y, clf, kernel_fn, genre_names,n_splits=args.cv, clf_name=clf_name, feat_key=feat_key, kernel_name=kernel_name)
+                
                 results[clf_name][feat_key][kernel_name] = metrics
-                print(f"    [{kernel_name}] TPR={metrics['TPR']:.3f}  FPR={metrics['FPR']:.3f}")
-
+                agg = metrics["aggregated"]
+                print(f"[{kernel_name}] TPR={agg['TPR']:.3f}  FPR={agg['FPR']:.3f}")
+                    
     with open(args.out, "w") as f:
         json.dump(results, f, indent=2)
     print(f"\n[DONE] Results -> {args.out}")
