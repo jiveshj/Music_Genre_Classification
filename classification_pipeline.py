@@ -10,6 +10,10 @@ Output format
     },
     "hubert":  {...},
     "mert":    {...}
+    "MFCC": {...},
+    "spectrogram": {...},
+    "mel_spectrogram": {...},
+    "log_mel_spectrogram": {...}
   },
   "DecisionTree": { ... },
   "LogisticRegression": { ... }
